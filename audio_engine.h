@@ -5,10 +5,10 @@
 class AudioEngine
 {
 public:
-    AudioEngine(unsigned int sampleRate = 44100,
-                unsigned int captureChannels = 0,
-                unsigned int playbackChannels = 0,
-                unsigned int framesPerBuffer = 512);
+    AudioEngine(ma_uint32 sampleRate = 44100,
+                ma_uint32 captureChannels = 0,
+                ma_uint32 playbackChannels = 0,
+                ma_uint32 framesPerBuffer = 512);
 
     ~AudioEngine();
 

@@ -1,3 +1,9 @@
 # Compiled executables
 amp
 main
+
+# Debug symbols
+*.dSYM
+
+# macOS
+.DS_Store

@@ -2,12 +2,13 @@
 #include "miniaudio.h"
 #include "audio_engine.h"
 #include <stdexcept>
+#include <string>
 
 AudioEngine::AudioEngine(
-    unsigned int sampleRate,
-    unsigned int captureChannels,
-    unsigned int playbackChannels,
-    unsigned int framesPerBuffer)
+    ma_uint32 sampleRate,
+    ma_uint32 captureChannels,
+    ma_uint32 playbackChannels,
+    ma_uint32 framesPerBuffer)
 {
     ma_device_config config = ma_device_config_init(ma_device_type_duplex);
 
@@ -84,8 +85,8 @@ void AudioEngine::processAudio(
     const float* pInput,
     ma_uint32 frameCount)
 {
-    unsigned int captureChannels = device_.capture.channels;
-    unsigned int playbackChannels = device_.playback.channels;
+    ma_uint32 captureChannels = device_.capture.channels;
+    ma_uint32 playbackChannels = device_.playback.channels;
 
     if (captureChannels == playbackChannels)
     {
