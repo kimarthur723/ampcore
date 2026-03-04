@@ -1,6 +1,7 @@
 #define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
 #include "audio_engine.h"
+#include "processor_graph.h"
 #include <stdexcept>
 #include <string>
 
@@ -35,11 +36,30 @@ AudioEngine::AudioEngine(
             ma_result_description(result)
         );
     }
+
+    graph_ = std::make_unique<ProcessorGraph>(
+        device_.playback.channels
+    );
 }
 
 AudioEngine::~AudioEngine()
 {
     ma_device_uninit(&device_);
+}
+
+ProcessorGraph& AudioEngine::getGraph()
+{
+    return *graph_;
+}
+
+ma_uint32 AudioEngine::getSampleRate() const
+{
+    return device_.sampleRate;
+}
+
+ma_uint32 AudioEngine::getChannels() const
+{
+    return device_.playback.channels;
 }
 
 void AudioEngine::start()
@@ -53,6 +73,7 @@ void AudioEngine::start()
             ma_result_description(result)
         );
     }
+
 }
 
 
@@ -85,26 +106,6 @@ void AudioEngine::processAudio(
     const float* pInput,
     ma_uint32 frameCount)
 {
-    ma_uint32 captureChannels = device_.capture.channels;
-    ma_uint32 playbackChannels = device_.playback.channels;
-
-    if (captureChannels == playbackChannels)
-    {
-        for (ma_uint32 i = 0; i < frameCount * captureChannels; ++i)
-        {
-            pOutput[i] = pInput[i];
-        }
-    }
-    else if (captureChannels == 1 && playbackChannels == 2)
-    {
-        for (ma_uint32 frame = 0; frame < frameCount; ++frame)
-        {
-            float sample = pInput[frame];
-            pOutput[frame * 2 + 0] = sample;
-            pOutput[frame * 2 + 1] = sample;
-        }
-    }
-    else {
-        return;
-    }
+    (void)pInput;
+    graph_->read(pOutput, frameCount);
 }
