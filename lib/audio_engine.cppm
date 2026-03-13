@@ -1,15 +1,48 @@
+module;
 #define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
-#include "audio_engine.h"
-#include "processor_graph.h"
 #include <stdexcept>
 #include <string>
 
+export module audio_engine;
+
+import processor_graph;
+
+export class AudioEngine
+{
+public:
+    AudioEngine(ProcessorGraph& graph,
+                ma_uint32 sampleRate = 44100,
+                ma_uint32 captureChannels = 0,
+                ma_uint32 framesPerBuffer = 512);
+
+    ~AudioEngine();
+
+    // non copyable, non movable
+    AudioEngine(const AudioEngine&) = delete;
+    AudioEngine& operator=(const AudioEngine&) = delete;
+    AudioEngine(AudioEngine&&) = delete;
+    AudioEngine& operator=(AudioEngine&&) = delete;
+
+    ma_uint32 getSampleRate() const;
+    void start();
+    void stop();
+    bool isStarted() const;
+
+private:
+    ProcessorGraph& graph_;
+    ma_device device_;
+
+    static void audioCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount);
+    void processAudio(float* pOutput, const float* pInput, ma_uint32 frameCount);
+};
+
 AudioEngine::AudioEngine(
+    ProcessorGraph& graph,
     ma_uint32 sampleRate,
     ma_uint32 captureChannels,
-    ma_uint32 playbackChannels,
     ma_uint32 framesPerBuffer)
+    : graph_(graph)
 {
     ma_device_config config = ma_device_config_init(ma_device_type_duplex);
 
@@ -19,7 +52,7 @@ AudioEngine::AudioEngine(
 
     // playback settings
     config.playback.format = ma_format_f32;
-    config.playback.channels = playbackChannels;
+    config.playback.channels = graph.getChannels();
 
     // other settings
     config.sampleRate = sampleRate;
@@ -36,10 +69,6 @@ AudioEngine::AudioEngine(
             ma_result_description(result)
         );
     }
-
-    graph_ = std::make_unique<ProcessorGraph>(
-        device_.playback.channels
-    );
 }
 
 AudioEngine::~AudioEngine()
@@ -47,25 +76,15 @@ AudioEngine::~AudioEngine()
     ma_device_uninit(&device_);
 }
 
-ProcessorGraph& AudioEngine::getGraph()
-{
-    return *graph_;
-}
-
 ma_uint32 AudioEngine::getSampleRate() const
 {
     return device_.sampleRate;
 }
 
-ma_uint32 AudioEngine::getChannels() const
-{
-    return device_.playback.channels;
-}
-
 void AudioEngine::start()
 {
     ma_result result = ma_device_start(&device_);
-    
+
     if (result != MA_SUCCESS)
     {
         throw std::runtime_error(
@@ -73,9 +92,7 @@ void AudioEngine::start()
             ma_result_description(result)
         );
     }
-
 }
-
 
 void AudioEngine::stop()
 {
@@ -94,7 +111,7 @@ void AudioEngine::audioCallback(
     ma_uint32 frameCount)
 {
     AudioEngine* engine = static_cast<AudioEngine*>(pDevice->pUserData);
-    
+
     float* output = static_cast<float*>(pOutput);
     const float* input = static_cast<const float*>(pInput);
 
@@ -107,5 +124,5 @@ void AudioEngine::processAudio(
     ma_uint32 frameCount)
 {
     (void)pInput;
-    graph_->read(pOutput, frameCount);
+    graph_.read(pOutput, frameCount);
 }

@@ -1,6 +1,19 @@
-#include "source_node.h"
+module;
+#include "miniaudio.h"
 #include <stdexcept>
 #include <string>
+
+export module source_node;
+
+import node_base;
+import processor_graph;
+
+export class SourceNode : public NodeBase
+{
+public:
+    SourceNode(ProcessorGraph& graph, ma_uint32 channels);
+    ~SourceNode();
+};
 
 static void sourceProcessCallback(ma_node* pNode, const float** ppFramesIn,
                                    ma_uint32* pFrameCountIn, float** ppFramesOut,
@@ -21,8 +34,8 @@ static ma_node_vtable sourceVTable = {
     0
 };
 
-SourceNode::SourceNode(ma_node_graph* graph, ma_uint32 channels)
-    : NodeBase(graph)
+SourceNode::SourceNode(ProcessorGraph& graph, ma_uint32 channels)
+    : NodeBase(graph.get())
 {
     ma_uint32 outputChannels[] = { channels };
 
@@ -32,7 +45,7 @@ SourceNode::SourceNode(ma_node_graph* graph, ma_uint32 channels)
 
     wrapper_.owner = this;
 
-    ma_result result = ma_node_init(graph, &config, nullptr, &wrapper_.base);
+    ma_result result = ma_node_init(graph.get(), &config, nullptr, &wrapper_.base);
 
     if (result != MA_SUCCESS)
     {

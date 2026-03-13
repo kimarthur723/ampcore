@@ -1,15 +1,17 @@
-#pragma once
+module;
 #include "miniaudio.h"
 
-class NodeBase;
+export module node_base;
 
-struct NodeWrapper
+export class NodeBase;
+
+export struct NodeWrapper
 {
     ma_node_base base;
     NodeBase* owner;
 };
 
-class NodeBase
+export class NodeBase
 {
 public:
     NodeBase(ma_node_graph* graph) { (void)graph; }

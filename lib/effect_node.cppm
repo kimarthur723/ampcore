@@ -1,6 +1,19 @@
-#include "effect_node.h"
+module;
+#include "miniaudio.h"
 #include <stdexcept>
 #include <string>
+
+export module effect_node;
+
+import node_base;
+import processor_graph;
+
+export class EffectNode : public NodeBase
+{
+public:
+    EffectNode(ProcessorGraph& graph, ma_uint32 channels);
+    ~EffectNode();
+};
 
 static void effectProcessCallback(ma_node* pNode, const float** ppFramesIn,
                                    ma_uint32* pFrameCountIn, float** ppFramesOut,
@@ -20,8 +33,8 @@ static ma_node_vtable effectVTable = {
     0
 };
 
-EffectNode::EffectNode(ma_node_graph* graph, ma_uint32 channels)
-    : NodeBase(graph)
+EffectNode::EffectNode(ProcessorGraph& graph, ma_uint32 channels)
+    : NodeBase(graph.get())
 {
     ma_uint32 inputChannels[] = { channels };
     ma_uint32 outputChannels[] = { channels };
@@ -33,7 +46,7 @@ EffectNode::EffectNode(ma_node_graph* graph, ma_uint32 channels)
 
     wrapper_.owner = this;
 
-    ma_result result = ma_node_init(graph, &config, nullptr, &wrapper_.base);
+    ma_result result = ma_node_init(graph.get(), &config, nullptr, &wrapper_.base);
 
     if (result != MA_SUCCESS)
     {

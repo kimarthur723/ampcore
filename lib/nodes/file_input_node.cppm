@@ -1,9 +1,29 @@
-#include "file_input_node.h"
+module;
+#include "miniaudio.h"
 #include <stdexcept>
 #include <string>
 #include <cstring>
 
-FileInputNode::FileInputNode(ma_node_graph* graph, const char* filePath,
+export module file_input_node;
+
+import source_node;
+
+export class FileInputNode : public SourceNode
+{
+public:
+    FileInputNode(ProcessorGraph& graph, const char* filePath,
+                  ma_uint32 channels, ma_uint32 sampleRate);
+    ~FileInputNode();
+
+    void process(float* pOutput, const float* pInput,
+                 ma_uint32 frameCount) override;
+
+private:
+    ma_decoder decoder_;
+    bool decoderInitialized_;
+};
+
+FileInputNode::FileInputNode(ProcessorGraph& graph, const char* filePath,
                              ma_uint32 channels, ma_uint32 sampleRate)
     : SourceNode(graph, channels), decoderInitialized_(false)
 {
