@@ -3,6 +3,7 @@ module;
 
 export module fuzz;
 
+import processor_graph;
 import effect_node;
 
 export class Fuzz : public EffectNode

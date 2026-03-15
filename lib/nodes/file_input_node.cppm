@@ -6,6 +6,7 @@ module;
 
 export module file_input_node;
 
+import processor_graph;
 import source_node;
 
 export class FileInputNode : public SourceNode
