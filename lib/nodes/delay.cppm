@@ -1,5 +1,6 @@
 module;
 #include "miniaudio.h"
+#include <atomic>
 #include <vector>
 
 export module delay;
@@ -13,6 +14,9 @@ public:
     Delay(ProcessorGraph& graph, ma_uint32 channels, ma_uint32 sampleRate,
           float delaySeconds = 0.5f, float feedback = 0.4f, float mix = 0.5f);
 
+    void setFeedback(float feedback) { feedback_.store(feedback, std::memory_order_relaxed); }
+    void setMix(float mix) { mix_.store(mix, std::memory_order_relaxed); }
+
     void process(float* pOutput, const float* pInput,
                  ma_uint32 frameCount) override;
 
@@ -21,8 +25,8 @@ private:
     ma_uint32 writePos_;
     ma_uint32 delaySamples_;
     ma_uint32 channels_;
-    float feedback_;
-    float mix_;
+    std::atomic<float> feedback_;
+    std::atomic<float> mix_;
 };
 
 Delay::Delay(ProcessorGraph& graph, ma_uint32 channels, ma_uint32 sampleRate,
@@ -40,14 +44,16 @@ Delay::Delay(ProcessorGraph& graph, ma_uint32 channels, ma_uint32 sampleRate,
 void Delay::process(float* pOutput, const float* pInput, ma_uint32 frameCount)
 {
     ma_uint32 bufferSize = static_cast<ma_uint32>(buffer_.size());
+    float feedback = feedback_.load(std::memory_order_relaxed);
+    float mix = mix_.load(std::memory_order_relaxed);
 
     for (ma_uint32 i = 0; i < frameCount * channels_; ++i)
     {
         ma_uint32 readPos = (writePos_ + bufferSize - delaySamples_) % bufferSize;
 
         float delayed = buffer_[readPos];
-        buffer_[writePos_] = pInput[i] + delayed * feedback_;
-        pOutput[i] = pInput[i] * (1.0f - mix_) + delayed * mix_;
+        buffer_[writePos_] = pInput[i] + delayed * feedback;
+        pOutput[i] = pInput[i] * (1.0f - mix) + delayed * mix;
 
         writePos_ = (writePos_ + 1) % bufferSize;
     }

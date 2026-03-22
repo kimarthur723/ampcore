@@ -1,3 +1,7 @@
+# Build directories
+build/
+build_*/
+
 # Compiled executables
 amp
 main
