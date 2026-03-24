@@ -1,6 +1,6 @@
 # amp
 
-Modular guitar amp simulator built on a real-time audio processing graph. Nodes can be added, removed, and rewired while audio is running.
+Modular guitar amp simulator (more accurately, a real-time audio DSP) built on a real-time audio processing graph. Nodes can be added, removed, and rewired while audio is running.
 
 ## Features
 
