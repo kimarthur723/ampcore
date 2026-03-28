@@ -1,2 +1,2 @@
-add_executable(amp_demo main.cpp)
-target_link_libraries(amp_demo PRIVATE amp_core)
+add_executable(sigchain_demo main.cpp)
+target_link_libraries(sigchain_demo PRIVATE sigchain_capi)

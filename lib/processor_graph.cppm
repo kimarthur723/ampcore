@@ -2,12 +2,14 @@ module;
 #include "miniaudio.h"
 #include <stdexcept>
 #include <string>
+#include <vector>
 #include <atomic>
 #include <cstddef>
 
 export module processor_graph;
 
 import node_base;
+import preset;
 
 // lock-free single-producer single-consumer ring buffer
 // N must be a power of 2
@@ -78,10 +80,22 @@ public:
     void connectToOutput(NodeBase* node);
 
     // thread-safe — enqueue mutations for the audio thread to apply
-    void postConnect(NodeBase* from, NodeBase* to);
-    void postConnectToOutput(NodeBase* node);
-    void postDisconnect(NodeBase* node); // detaches node without destroying it
-    void postRemove(NodeBase* node);    // detaches node and queues it for collection
+    bool postConnect(NodeBase* from, NodeBase* to);
+    bool postConnectToOutput(NodeBase* node);
+    bool postDisconnect(NodeBase* node); // detaches node without destroying it
+    bool postRemove(NodeBase* node);    // detaches node and queues it for collection
+
+    // node registry — tracks nodes with type names for serialization
+    void registerNode(int id, const std::string& typeName, NodeBase* node);
+    void unregisterNode(int id);
+
+    void registerConnection(int fromId, int toId, bool toOutput = false);
+
+    // serialization
+    std::string serializeToJson() const;
+    bool loadFromJson(const std::string& json,
+                      NodeBase* (*createNode)(const std::string& type, ma_node_graph* graph),
+                      void (*destroyNode)(NodeBase* node));
 
     // call from GUI thread to reclaim nodes removed via postRemove
     template<typename Fn>
@@ -93,6 +107,19 @@ public:
     }
 
 private:
+    struct RegisteredNode {
+        int id;
+        std::string typeName;
+        NodeBase* node;
+    };
+    std::vector<RegisteredNode> registeredNodes_;
+
+    struct RegisteredConnection {
+        int fromId;
+        int toId;       // -1 means output
+        bool toOutput;
+    };
+    std::vector<RegisteredConnection> registeredConnections_;
     ma_node_graph graph_;
     ma_uint32 channels_;
     bool initialized_;
@@ -127,7 +154,9 @@ ProcessorGraph::~ProcessorGraph()
 }
 
 ProcessorGraph::ProcessorGraph(ProcessorGraph&& other) noexcept
-    : graph_(other.graph_), channels_(other.channels_), initialized_(other.initialized_)
+    : registeredNodes_(std::move(other.registeredNodes_)),
+      registeredConnections_(std::move(other.registeredConnections_)),
+      graph_(other.graph_), channels_(other.channels_), initialized_(other.initialized_)
 {
     other.initialized_ = false;
 }
@@ -143,6 +172,8 @@ ProcessorGraph& ProcessorGraph::operator=(ProcessorGraph&& other) noexcept
         graph_ = other.graph_;
         channels_ = other.channels_;
         initialized_ = other.initialized_;
+        registeredNodes_ = std::move(other.registeredNodes_);
+        registeredConnections_ = std::move(other.registeredConnections_);
         other.initialized_ = false;
     }
     return *this;
@@ -210,22 +241,157 @@ void ProcessorGraph::connectToOutput(NodeBase* node)
     ma_node_attach_output_bus(node->getNode(), 0, ma_node_graph_get_endpoint(&graph_), 0);
 }
 
-void ProcessorGraph::postConnect(NodeBase* from, NodeBase* to)
+bool ProcessorGraph::postConnect(NodeBase* from, NodeBase* to)
 {
-    commandQueue_.push({ GraphCommand::Type::Connect, from, to });
+    return commandQueue_.push({ GraphCommand::Type::Connect, from, to });
 }
 
-void ProcessorGraph::postConnectToOutput(NodeBase* node)
+bool ProcessorGraph::postConnectToOutput(NodeBase* node)
 {
-    commandQueue_.push({ GraphCommand::Type::ConnectToOutput, node, nullptr });
+    return commandQueue_.push({ GraphCommand::Type::ConnectToOutput, node, nullptr });
 }
 
-void ProcessorGraph::postDisconnect(NodeBase* node)
+bool ProcessorGraph::postDisconnect(NodeBase* node)
 {
-    commandQueue_.push({ GraphCommand::Type::Disconnect, node, nullptr });
+    return commandQueue_.push({ GraphCommand::Type::Disconnect, node, nullptr });
 }
 
-void ProcessorGraph::postRemove(NodeBase* node)
+bool ProcessorGraph::postRemove(NodeBase* node)
 {
-    commandQueue_.push({ GraphCommand::Type::Remove, node, nullptr });
+    return commandQueue_.push({ GraphCommand::Type::Remove, node, nullptr });
+}
+
+void ProcessorGraph::registerNode(int id, const std::string& typeName, NodeBase* node)
+{
+    registeredNodes_.push_back({id, typeName, node});
+}
+
+void ProcessorGraph::unregisterNode(int id)
+{
+    for (auto it = registeredNodes_.begin(); it != registeredNodes_.end(); ++it)
+    {
+        if (it->id == id)
+        {
+            registeredNodes_.erase(it);
+            break;
+        }
+    }
+    // also remove connections involving this node
+    auto cit = registeredConnections_.begin();
+    while (cit != registeredConnections_.end())
+    {
+        if (cit->fromId == id || cit->toId == id)
+            cit = registeredConnections_.erase(cit);
+        else
+            ++cit;
+    }
+}
+
+void ProcessorGraph::registerConnection(int fromId, int toId, bool toOutput)
+{
+    registeredConnections_.push_back({fromId, toId, toOutput});
+}
+
+std::string ProcessorGraph::serializeToJson() const
+{
+    std::vector<PresetNode> nodes;
+    for (const auto& rn : registeredNodes_)
+    {
+        PresetNode pn;
+        pn.id = rn.id;
+        pn.type = rn.typeName;
+
+        int paramCount = rn.node->getParameterCount();
+        for (int i = 0; i < paramCount; ++i)
+        {
+            ParameterInfo info = rn.node->getParameterInfo(i);
+            float val = rn.node->getParameterValue(i);
+            pn.params.push_back({info.name, val});
+        }
+        nodes.push_back(std::move(pn));
+    }
+
+    std::vector<PresetConnection> connections;
+    for (const auto& rc : registeredConnections_)
+    {
+        PresetConnection pc;
+        pc.from = rc.fromId;
+        pc.to = rc.toId;
+        pc.toOutput = rc.toOutput;
+        connections.push_back(pc);
+    }
+
+    return serializePreset(nodes, connections);
+}
+
+bool ProcessorGraph::loadFromJson(const std::string& json,
+                                  NodeBase* (*createNode)(const std::string& type, ma_node_graph* graph),
+                                  void (*destroyNode)(NodeBase* node))
+{
+    std::vector<PresetNode> nodes;
+    std::vector<PresetConnection> connections;
+    if (!parsePreset(json, nodes, connections))
+        return false;
+
+    // tear down existing nodes
+    for (auto& rn : registeredNodes_)
+    {
+        ma_node_detach_output_bus(rn.node->getNode(), 0);
+        destroyNode(rn.node);
+    }
+    registeredNodes_.clear();
+    registeredConnections_.clear();
+
+    // create nodes
+    for (const auto& pn : nodes)
+    {
+        NodeBase* node = createNode(pn.type, &graph_);
+        if (!node) return false;
+
+        // restore parameters
+        for (const auto& [name, value] : pn.params)
+        {
+            int paramCount = node->getParameterCount();
+            for (int i = 0; i < paramCount; ++i)
+            {
+                ParameterInfo info = node->getParameterInfo(i);
+                if (std::string(info.name) == name)
+                {
+                    node->setParameterValue(i, value);
+                    break;
+                }
+            }
+        }
+
+        registeredNodes_.push_back({pn.id, pn.type, node});
+    }
+
+    // rebuild connections
+    for (const auto& pc : connections)
+    {
+        NodeBase* fromNode = nullptr;
+        NodeBase* toNode = nullptr;
+
+        for (const auto& rn : registeredNodes_)
+        {
+            if (rn.id == pc.from) fromNode = rn.node;
+            if (rn.id == pc.to)   toNode = rn.node;
+        }
+
+        if (!fromNode) return false;
+
+        if (pc.toOutput)
+        {
+            connectToOutput(fromNode);
+        }
+        else
+        {
+            if (!toNode) return false;
+            connect(fromNode, toNode);
+        }
+
+        registeredConnections_.push_back({pc.from, pc.to, pc.toOutput});
+    }
+
+    return true;
 }

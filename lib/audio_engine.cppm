@@ -7,6 +7,7 @@ module;
 export module audio_engine;
 
 import processor_graph;
+import audio_input_node;
 
 export class AudioEngine
 {
@@ -28,10 +29,12 @@ public:
     void start();
     void stop();
     bool isStarted() const;
+    void setInputNode(AudioInputNode* node) { inputNode_ = node; }
 
 private:
     ProcessorGraph& graph_;
     ma_device device_;
+    AudioInputNode* inputNode_ = nullptr;
 
     static void audioCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount);
     void processAudio(float* pOutput, const float* pInput, ma_uint32 frameCount);
@@ -123,6 +126,15 @@ void AudioEngine::processAudio(
     const float* pInput,
     ma_uint32 frameCount)
 {
-    (void)pInput;
+    if (inputNode_)
+    {
+        inputNode_->writeInput(pInput, frameCount);
+    }
+
     graph_.read(pOutput, frameCount);
+
+    if (inputNode_)
+    {
+        inputNode_->clearInput();
+    }
 }

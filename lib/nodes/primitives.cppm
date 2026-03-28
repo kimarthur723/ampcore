@@ -6,6 +6,7 @@ module;
 
 export module primitives;
 
+import node_base;
 import processor_graph;
 import effect_node;
 
@@ -25,6 +26,29 @@ public:
         float g = gain_.load(std::memory_order_relaxed);
         for (ma_uint32 i = 0; i < frameCount * channels_; ++i)
             pOutput[i] = pInput[i] * g;
+    }
+
+    int getParameterCount() const override { return 1; }
+    ParameterInfo getParameterInfo(int index) const override
+    {
+        switch (index) {
+            case 0: return {"gain", 0.0f, 10.0f, 1.0f, "x"};
+            default: return {"", 0, 0, 0, ""};
+        }
+    }
+    float getParameterValue(int index) const override
+    {
+        switch (index) {
+            case 0: return gain_.load(std::memory_order_relaxed);
+            default: return 0.0f;
+        }
+    }
+    void setParameterValue(int index, float value) override
+    {
+        switch (index) {
+            case 0: gain_.store(value, std::memory_order_relaxed); break;
+            default: break;
+        }
     }
 
 private:
@@ -78,6 +102,35 @@ public:
     }
 
     void process(float* pOutput, const float* pInput, ma_uint32 frameCount) override;
+
+    int getParameterCount() const override { return 3; }
+    ParameterInfo getParameterInfo(int index) const override
+    {
+        switch (index) {
+            case 0: return {"freq", 20.0f, 20000.0f, 1000.0f, "Hz"};
+            case 1: return {"q", 0.1f, 20.0f, 0.707f, ""};
+            case 2: return {"dbGain", -24.0f, 24.0f, 0.0f, "dB"};
+            default: return {"", 0, 0, 0, ""};
+        }
+    }
+    float getParameterValue(int index) const override
+    {
+        switch (index) {
+            case 0: return freq_.load(std::memory_order_relaxed);
+            case 1: return q_.load(std::memory_order_relaxed);
+            case 2: return dbGain_.load(std::memory_order_relaxed);
+            default: return 0.0f;
+        }
+    }
+    void setParameterValue(int index, float value) override
+    {
+        switch (index) {
+            case 0: setFreq(value); break;
+            case 1: setQ(value); break;
+            case 2: setDbGain(value); break;
+            default: break;
+        }
+    }
 
 private:
     void recalcCoeffs();

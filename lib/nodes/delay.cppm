@@ -5,6 +5,7 @@ module;
 
 export module delay;
 
+import node_base;
 import processor_graph;
 import effect_node;
 
@@ -19,6 +20,32 @@ public:
 
     void process(float* pOutput, const float* pInput,
                  ma_uint32 frameCount) override;
+
+    int getParameterCount() const override { return 2; }
+    ParameterInfo getParameterInfo(int index) const override
+    {
+        switch (index) {
+            case 0: return {"feedback", 0.0f, 1.0f, 0.4f, ""};
+            case 1: return {"mix", 0.0f, 1.0f, 0.5f, ""};
+            default: return {"", 0, 0, 0, ""};
+        }
+    }
+    float getParameterValue(int index) const override
+    {
+        switch (index) {
+            case 0: return feedback_.load(std::memory_order_relaxed);
+            case 1: return mix_.load(std::memory_order_relaxed);
+            default: return 0.0f;
+        }
+    }
+    void setParameterValue(int index, float value) override
+    {
+        switch (index) {
+            case 0: feedback_.store(value, std::memory_order_relaxed); break;
+            case 1: mix_.store(value, std::memory_order_relaxed); break;
+            default: break;
+        }
+    }
 
 private:
     std::vector<float> buffer_;

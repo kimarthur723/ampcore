@@ -11,6 +11,14 @@ export struct NodeWrapper
     NodeBase* owner;
 };
 
+export struct ParameterInfo {
+    const char* name;
+    float min_value;
+    float max_value;
+    float default_value;
+    const char* unit;
+};
+
 export class NodeBase
 {
 public:
@@ -33,6 +41,12 @@ public:
     virtual void process(float* pOutput,
                          const float* pInput,
                          ma_uint32 frameCount) = 0;
+
+    virtual int getParameterCount() const { return 0; }
+    virtual ParameterInfo getParameterInfo(int index) const { (void)index; return {"", 0, 0, 0, ""}; }
+    virtual float getParameterValue(int index) const { (void)index; return 0.0f; }
+    virtual void setParameterValue(int index, float value) { (void)index; (void)value; }
+
 protected:
     NodeWrapper wrapper_;
 };
