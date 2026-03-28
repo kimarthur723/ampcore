@@ -1,4 +1,4 @@
-# sigchain
+# ampcore
 
 Real-time signal processing library for building audio effect chains. Nodes can be added, removed, and rewired while audio is running.
 
@@ -6,10 +6,10 @@ Real-time signal processing library for building audio effect chains. Nodes can 
 
 - Real-time audio engine backed by [miniaudio](https://miniaud.io/)
 - Graph rewiring implemented via lock-free queue
-- C API (`sigchain_capi.h`) with opaque handles and error codes for FFI
+- C API (`ampcore_capi.h`) with opaque handles and error codes for FFI
 - Runtime parameter introspection (name, range, unit) for generic GUI binding
 - JSON preset save/load graph state
-- CMake package with `find_package(sigchain)` support
+- CMake package with `find_package(ampcore)` support
 
 ### Nodes
 
@@ -23,13 +23,13 @@ Real-time signal processing library for building audio effect chains. Nodes can 
 
 ### C++ behind a C API
 
-The library is C++23 internally, exposed through a C API. The C ABI is stable and allows interop with supported languages. Callers only see `SigchainNode` handles and `SigchainResult` error codes.
+The library is C++23 internally, exposed through a C API. The C ABI is stable and allows interop with supported languages. Callers only see `AmpcoreNode` handles and `AmpcoreResult` error codes.
 
 ### Lock-free graph rewiring
 
 The audio callback runs on a high-priority thread with a hard deadline, blocking it causes dropouts. A mutex between the GUI thread and the audio thread risks priority inversion: the audio thread could stall waiting for a lock held by the GUI thread, which the OS scheduler may not prioritize. Instead, graph mutations (`post_connect`, `post_disconnect`) are enqueued into a lock-free queue. The audio thread drains the queue at the top of each callback before processing. The GUI thread never blocks the audio thread.
 
-The tradeoff: the queue has a fixed capacity of 64 commands. Flooding it faster than the audio thread drains it returns `SIGCHAIN_ERROR_QUEUE_FULL`. For normal GUI interaction this is never reached. Probably.
+The tradeoff: the queue has a fixed capacity of 64 commands. Flooding it faster than the audio thread drains it returns `AMPCORE_ERROR_QUEUE_FULL`. For normal GUI interaction this is never reached. Probably.
 
 ### Atomic parameters
 
@@ -59,59 +59,59 @@ cmake --install build --prefix /usr/local
 ### Engine setup
 
 ```c
-SigchainNode graph, engine;
-sigchain_graph_create(2, &graph);
-sigchain_engine_create(graph, 44100, &engine);
-sigchain_engine_start(engine);
+AmpcoreNode graph, engine;
+ampcore_graph_create(2, &graph);
+ampcore_engine_create(graph, 44100, &engine);
+ampcore_engine_start(engine);
 
 // ...
 
-sigchain_engine_stop(engine);
-sigchain_engine_destroy(engine);
-sigchain_graph_destroy(graph);
+ampcore_engine_stop(engine);
+ampcore_engine_destroy(engine);
+ampcore_graph_destroy(graph);
 ```
 
 ### Creating and connecting nodes
 
 ```c
-SigchainNode fuzz, delay;
-sigchain_fuzz_create(graph, 2, 8.0f, 0.7f, &fuzz);
-sigchain_delay_create(graph, 2, 44100, 0.3f, 0.4f, 0.5f, &delay);
+AmpcoreNode fuzz, delay;
+ampcore_fuzz_create(graph, 2, 8.0f, 0.7f, &fuzz);
+ampcore_delay_create(graph, 2, 44100, 0.3f, 0.4f, 0.5f, &delay);
 
-sigchain_graph_connect(graph, fuzz, delay);
-sigchain_graph_connect_to_output(graph, delay);
+ampcore_graph_connect(graph, fuzz, delay);
+ampcore_graph_connect_to_output(graph, delay);
 ```
 
 Rewire while the engine is running:
 
 ```c
-sigchain_graph_post_connect(graph, fuzz, delay);
-sigchain_graph_post_disconnect(graph, delay);
+ampcore_graph_post_connect(graph, fuzz, delay);
+ampcore_graph_post_disconnect(graph, delay);
 ```
 
 ### Live audio input
 
 ```c
-SigchainNode input;
-sigchain_audio_input_create(graph, 2, &input);
-sigchain_engine_set_input_node(engine, input);
+AmpcoreNode input;
+ampcore_audio_input_create(graph, 2, &input);
+ampcore_engine_set_input_node(engine, input);
 ```
 
 ### Parameter introspection
 
 ```c
-int count = sigchain_node_get_parameter_count(fuzz);
+int count = ampcore_node_get_parameter_count(fuzz);
 for (int i = 0; i < count; i++) {
-    SigchainParameterInfo info;
-    sigchain_node_get_parameter_info(fuzz, i, &info);
+    AmpcoreParameterInfo info;
+    ampcore_node_get_parameter_info(fuzz, i, &info);
     // info.name, info.min_value, info.max_value, info.unit
-    sigchain_node_set_parameter_value(fuzz, i, 0.5f);
+    ampcore_node_set_parameter_value(fuzz, i, 0.5f);
 }
 ```
 
 ### Presets
 
 ```c
-sigchain_preset_save(graph, "my_preset.json");
-sigchain_preset_load(graph, "my_preset.json");
+ampcore_preset_save(graph, "my_preset.json");
+ampcore_preset_load(graph, "my_preset.json");
 ```
