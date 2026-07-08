@@ -1,4 +1,4 @@
-#include <ampcore/ampcore_capi.h>
+#include <ampcore_capi.h>
 #include <atomic>
 #include <chrono>
 #include <cmath>

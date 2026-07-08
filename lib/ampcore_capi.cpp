@@ -1,8 +1,11 @@
 #include "ampcore_capi.h"
 #include "miniaudio.h"
 #include <string>
-#include <fstream>
-#include <sstream>
+#include <cstdio>
+// NOTE: file I/O here uses C stdio rather than <fstream>/<sstream>. Those pull in
+// <format>, and textually including <format> in a TU that also `import`s the node
+// modules (whose global module fragments reach the same std::__format entities)
+// trips a GCC 14 modules bug ("failed to load pendings for std::__format::...").
 
 import node_base;
 import processor_graph;
@@ -646,24 +649,47 @@ AmpcoreResult ampcore_preset_save(AmpcoreNode graph, const char* path)
     if (!graph || !path) return AMPCORE_ERROR_NULL_ARG;
     try {
         std::string json = static_cast<ProcessorGraph*>(graph)->serializeToJson();
-        std::ofstream ofs(path);
-        if (!ofs) return AMPCORE_ERROR_FILE_NOT_FOUND;
-        ofs << json;
-        return ofs.good() ? AMPCORE_OK : AMPCORE_ERROR_UNKNOWN;
+        std::FILE* f = std::fopen(path, "wb");
+        if (!f) return AMPCORE_ERROR_FILE_NOT_FOUND;
+        std::size_t written = std::fwrite(json.data(), 1, json.size(), f);
+        bool ok = (written == json.size()) && (std::fclose(f) == 0);
+        return ok ? AMPCORE_OK : AMPCORE_ERROR_UNKNOWN;
     } catch (...) {
         return AMPCORE_ERROR_UNKNOWN;
     }
+}
+
+// NOTE: the preset subsystem is unfinished. Nodes are never registered with the
+// graph (ProcessorGraph::registerNode/registerConnection are currently unused), so
+// serializeToJson produces an empty preset, and the createNode factory below only
+// receives an ma_node_graph* — not enough to reconstruct nodes that need channel /
+// sample-rate context. Until that is built out, load rebuilds an empty graph and
+// rejects any preset that actually contains nodes.
+static NodeBase* preset_create_node(const std::string& /*type*/, ma_node_graph* /*graph*/)
+{
+    return nullptr;
+}
+static void preset_destroy_node(NodeBase* node)
+{
+    delete node;
 }
 
 AmpcoreResult ampcore_preset_load(AmpcoreNode graph, const char* path)
 {
     if (!graph || !path) return AMPCORE_ERROR_NULL_ARG;
     try {
-        std::ifstream ifs(path);
-        if (!ifs) return AMPCORE_ERROR_FILE_NOT_FOUND;
-        std::ostringstream ss;
-        ss << ifs.rdbuf();
-        bool ok = static_cast<ProcessorGraph*>(graph)->loadFromJson(ss.str());
+        std::FILE* f = std::fopen(path, "rb");
+        if (!f) return AMPCORE_ERROR_FILE_NOT_FOUND;
+        std::string contents;
+        char buf[4096];
+        std::size_t n;
+        while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0)
+            contents.append(buf, n);
+        bool read_ok = (std::ferror(f) == 0);
+        std::fclose(f);
+        if (!read_ok) return AMPCORE_ERROR_UNKNOWN;
+        bool ok = static_cast<ProcessorGraph*>(graph)->loadFromJson(
+            contents, preset_create_node, preset_destroy_node);
         return ok ? AMPCORE_OK : AMPCORE_ERROR_UNKNOWN;
     } catch (...) {
         return AMPCORE_ERROR_UNKNOWN;

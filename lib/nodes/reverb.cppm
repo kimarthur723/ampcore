@@ -12,7 +12,10 @@ import effect_node;
 
 // Freeverb-style reverb with 8 comb filters and 4 allpass filters.
 
-namespace {
+// Named namespace (not anonymous): in a module interface unit, anonymous-namespace
+// members have internal linkage, which GCC rejects when they are referenced by the
+// exported Reverb class. A named namespace gives them module linkage instead.
+namespace detail {
 
 class CombFilter
 {
@@ -76,12 +79,17 @@ private:
 constexpr int combTunings[8]    = { 1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617 };
 constexpr int allpassTunings[4] = { 556, 441, 341, 225 };
 
-} // namespace
+} // namespace detail
+
+using detail::CombFilter;
+using detail::AllpassFilter;
+using detail::combTunings;
+using detail::allpassTunings;
 
 export class Reverb : public EffectNode
 {
 public:
-    Reverb(ProcessorGraph& graph, ma_uint32 channels, ma_uint32 sampleRate,
+    Reverb(ProcessorGraph& graph, ma_uint32 channels, ma_uint32 sampleRate = 44100,
            float roomSize = 0.5f, float damping = 0.5f, float mix = 0.3f);
 
     void setRoomSize(float size) { roomSize_.store(size, std::memory_order_relaxed); }
