@@ -54,6 +54,16 @@ Install:
 cmake --install build --prefix /usr/local
 ```
 
+## GUI
+
+A tkinter frontend (requires `python3-tk` and a built `libampcore_capi`):
+
+```sh
+python3 gui/ampcore_gui.py
+```
+
+Add effects from the palette to build a serial chain (input → effects → output), reorder or remove them while audio is running, and adjust parameters with sliders generated from the introspection API.
+
 ## Usage
 
 ### Engine setup
