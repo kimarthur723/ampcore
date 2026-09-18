@@ -8,6 +8,7 @@ FetchContent_MakeAvailable(Catch2)
 
 add_executable(ampcore_tests
   test_fuzz.cpp
+  test_file_input.cpp
 )
 target_link_libraries(ampcore_tests PRIVATE ampcore_core Catch2::Catch2WithMain)
 
