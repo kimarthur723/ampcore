@@ -62,6 +62,7 @@ AmpcoreResult ampcore_file_input_create(AmpcoreNode graph, const char* path,
                                 uint32_t channels, uint32_t sample_rate,
                                 AmpcoreNode* out);
 void      ampcore_file_input_destroy(AmpcoreNode node);
+void      ampcore_file_input_set_looping(AmpcoreNode node, int loop);
 
 /* ── Fuzz ────────────────────────────────────────────────────────────────── */
 AmpcoreResult ampcore_fuzz_create(AmpcoreNode graph, uint32_t channels,

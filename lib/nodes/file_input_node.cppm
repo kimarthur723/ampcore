@@ -3,6 +3,7 @@ module;
 #include <stdexcept>
 #include <string>
 #include <cstring>
+#include <atomic>
 
 export module file_input_node;
 
@@ -19,9 +20,14 @@ public:
     void process(float* pOutput, const float* pInput,
                  ma_uint32 frameCount) override;
 
+    // when true, seeks back to the start on EOF instead of going silent
+    void setLooping(bool loop) { looping_.store(loop, std::memory_order_relaxed); }
+    bool isLooping() const { return looping_.load(std::memory_order_relaxed); }
+
 private:
     ma_decoder decoder_;
     bool decoderInitialized_;
+    std::atomic<bool> looping_{false};
 };
 
 FileInputNode::FileInputNode(ProcessorGraph& graph, const char* filePath,
@@ -55,13 +61,36 @@ void FileInputNode::process(float* pOutput, const float* pInput, ma_uint32 frame
 {
     (void)pInput;
 
-    ma_uint64 framesRead;
-    ma_decoder_read_pcm_frames(&decoder_, pOutput, frameCount, &framesRead);
+    ma_uint32 channels = decoder_.outputChannels;
+    ma_uint64 totalRead = 0;
+    bool justWrapped = false;
 
-    if (framesRead < frameCount)
+    while (totalRead < frameCount)
     {
-        ma_uint32 channels = decoder_.outputChannels;
-        std::memset(pOutput + framesRead * channels, 0,
-                    (frameCount - framesRead) * channels * sizeof(float));
+        ma_uint64 framesRead = 0;
+        ma_decoder_read_pcm_frames(
+            &decoder_, pOutput + totalRead * channels, frameCount - totalRead, &framesRead);
+        totalRead += framesRead;
+
+        if (framesRead > 0)
+        {
+            justWrapped = false;
+            continue;
+        }
+
+        // EOF: wrap around if looping, otherwise leave the rest silent.
+        // A zero-frame read right after a wrap means the file is empty —
+        // bail rather than spin on the audio thread.
+        if (!looping_.load(std::memory_order_relaxed) || justWrapped ||
+            ma_decoder_seek_to_pcm_frame(&decoder_, 0) != MA_SUCCESS)
+            break;
+
+        justWrapped = true;
+    }
+
+    if (totalRead < frameCount)
+    {
+        std::memset(pOutput + totalRead * channels, 0,
+                    (frameCount - totalRead) * channels * sizeof(float));
     }
 }
