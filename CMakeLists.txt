@@ -9,3 +9,9 @@ target_include_directories(miniaudio_headers INTERFACE vendor)
 
 add_subdirectory(lib)
 add_subdirectory(demo)
+
+option(AMPCORE_BUILD_TESTS "Build ampcore tests" ON)
+if(AMPCORE_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
