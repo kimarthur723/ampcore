@@ -22,8 +22,13 @@ export struct ParameterInfo {
 export class NodeBase
 {
 public:
+    using DestroyHook = void (*)(void* ctx, NodeBase* node);
+
     NodeBase(ma_node_graph* graph) { (void)graph; }
-    virtual ~NodeBase() = default;
+    virtual ~NodeBase()
+    {
+        if (destroyHook_) destroyHook_(destroyCtx_, this);
+    }
 
     // non-copyable
     NodeBase(const NodeBase&) = delete;
@@ -47,6 +52,16 @@ public:
     virtual float getParameterValue(int index) const { (void)index; return 0.0f; }
     virtual void setParameterValue(int index, float value) { (void)index; (void)value; }
 
+    void setDestroyHook(DestroyHook hook, void* ctx)
+    {
+        destroyHook_ = hook;
+        destroyCtx_ = ctx;
+    }
+
 protected:
     NodeWrapper wrapper_;
+
+private:
+    DestroyHook destroyHook_ = nullptr;
+    void* destroyCtx_ = nullptr;
 };
