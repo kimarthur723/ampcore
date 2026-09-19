@@ -12,6 +12,7 @@ import audio_input_node;
 export class AudioEngine
 {
 public:
+    // captureChannels 0 = same as graph
     AudioEngine(ProcessorGraph& graph,
                 ma_uint32 sampleRate = 44100,
                 ma_uint32 captureChannels = 0,
@@ -26,10 +27,11 @@ public:
     AudioEngine& operator=(AudioEngine&&) = delete;
 
     ma_uint32 getSampleRate() const;
+    ma_uint32 getCaptureChannels() const;
     void start();
     void stop();
     bool isStarted() const;
-    void setInputNode(AudioInputNode* node) { inputNode_ = node; }
+    void setInputNode(AudioInputNode* node); // throws on channel mismatch
 
 private:
     ProcessorGraph& graph_;
@@ -51,7 +53,7 @@ AudioEngine::AudioEngine(
 
     // capture settings
     config.capture.format = ma_format_f32;
-    config.capture.channels = captureChannels;
+    config.capture.channels = captureChannels != 0 ? captureChannels : graph.getChannels();
 
     // playback settings
     config.playback.format = ma_format_f32;
@@ -82,6 +84,22 @@ AudioEngine::~AudioEngine()
 ma_uint32 AudioEngine::getSampleRate() const
 {
     return device_.sampleRate;
+}
+
+ma_uint32 AudioEngine::getCaptureChannels() const
+{
+    return device_.capture.channels;
+}
+
+void AudioEngine::setInputNode(AudioInputNode* node)
+{
+    if (node && node->getChannels() != device_.capture.channels)
+    {
+        throw std::invalid_argument(
+            "AudioInputNode has " + std::to_string(node->getChannels()) +
+            " channels but the capture stream has " + std::to_string(device_.capture.channels));
+    }
+    inputNode_ = node;
 }
 
 void AudioEngine::start()

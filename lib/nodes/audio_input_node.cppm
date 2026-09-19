@@ -18,6 +18,8 @@ public:
     void writeInput(const float* pInput, ma_uint32 frameCount);
     void clearInput();
 
+    ma_uint32 getChannels() const { return channels_; }
+
 private:
     const float* inputPtr_ = nullptr;
     ma_uint32 inputFrameCount_ = 0;
