@@ -113,5 +113,5 @@ for (int i = 0; i < count; i++) {
 
 ```c
 ampcore_preset_save(graph, "my_preset.json");
-ampcore_preset_load(graph, "my_preset.json");
+ampcore_preset_load(graph, "my_preset.json", 44100);
 ```

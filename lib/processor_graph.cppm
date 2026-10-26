@@ -110,10 +110,18 @@ public:
     bool hasPendingCommands() const { return !commandQueue_.empty(); }
 
     // serialization
+    using CreateNodeFn  = NodeBase* (*)(const std::string& type, ProcessorGraph& graph, void* user);
+    using DestroyNodeFn = void (*)(NodeBase* node, void* user);
+
     std::string serializeToJson() const;
+
+    // replaces registered nodes only; fails without side effects on bad json
+    // or pending commands. detach blocks until the audio thread is done with
+    // the node, so this is live-safe but stalls the caller briefly
     bool loadFromJson(const std::string& json,
-                      NodeBase* (*createNode)(const std::string& type, ma_node_graph* graph),
-                      void (*destroyNode)(NodeBase* node));
+                      CreateNodeFn createNode,
+                      DestroyNodeFn destroyNode,
+                      void* user = nullptr);
 
     // call from GUI thread to reclaim nodes removed via postRemove
     template<typename Fn>
@@ -375,28 +383,28 @@ std::string ProcessorGraph::serializeToJson() const
 }
 
 bool ProcessorGraph::loadFromJson(const std::string& json,
-                                  NodeBase* (*createNode)(const std::string& type, ma_node_graph* graph),
-                                  void (*destroyNode)(NodeBase* node))
+                                  CreateNodeFn createNode,
+                                  DestroyNodeFn destroyNode,
+                                  void* user)
 {
     std::vector<PresetNode> nodes;
     std::vector<PresetConnection> connections;
     if (!parsePreset(json, nodes, connections))
         return false;
 
-    auto old = std::move(registeredNodes_);
-    registeredNodes_.clear();
-    registeredConnections_.clear();
-    for (auto& rn : old)
-    {
-        rn.node->setDestroyHook(nullptr, nullptr);
-        ma_node_detach_output_bus(rn.node->getNode(), 0);
-        destroyNode(rn.node);
-    }
+    if (hasPendingCommands())
+        return false;
+
+    std::vector<RegisteredNode> created;
+    auto destroyCreated = [&]() {
+        for (auto& rn : created) destroyNode(rn.node, user);
+    };
 
     for (const auto& pn : nodes)
     {
-        NodeBase* node = createNode(pn.type, &graph_);
-        if (!node) return false;
+        NodeBase* node = createNode(pn.type, *this, user);
+        if (!node) { destroyCreated(); return false; }
+        created.push_back({pn.id, pn.type, node});
 
         for (const auto& [name, value] : pn.params)
         {
@@ -410,32 +418,41 @@ bool ProcessorGraph::loadFromJson(const std::string& json,
                 }
             }
         }
-
-        registerNode(pn.id, pn.type, node);
     }
+
+    auto lookup = [&](int id) -> NodeBase* {
+        for (const auto& rn : created)
+            if (rn.id == id) return rn.node;
+        return nullptr;
+    };
+    for (const auto& pc : connections)
+    {
+        if (!lookup(pc.from) || (!pc.toOutput && !lookup(pc.to)))
+        {
+            destroyCreated();
+            return false;
+        }
+    }
+
+    auto old = std::move(registeredNodes_);
+    registeredNodes_.clear();
+    registeredConnections_.clear();
+    for (auto& rn : old)
+    {
+        rn.node->setDestroyHook(nullptr, nullptr);
+        ma_node_detach_output_bus(rn.node->getNode(), 0);
+        destroyNode(rn.node, user);
+    }
+
+    for (auto& rn : created)
+        registerNode(rn.id, rn.typeName, rn.node);
 
     for (const auto& pc : connections)
     {
-        NodeBase* fromNode = nullptr;
-        NodeBase* toNode = nullptr;
-
-        for (const auto& rn : registeredNodes_)
-        {
-            if (rn.id == pc.from) fromNode = rn.node;
-            if (rn.id == pc.to)   toNode = rn.node;
-        }
-
-        if (!fromNode) return false;
-
         if (pc.toOutput)
-        {
-            connectToOutput(fromNode);
-        }
+            connectToOutput(lookup(pc.from));
         else
-        {
-            if (!toNode) return false;
-            connect(fromNode, toNode);
-        }
+            connect(lookup(pc.from), lookup(pc.to));
     }
 
     return true;

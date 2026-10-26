@@ -154,7 +154,8 @@ AmpcoreResult ampcore_node_set_parameter_value(AmpcoreNode node, int index, floa
 
 /* ── Presets ─────────────────────────────────────────────────────────────── */
 AmpcoreResult ampcore_preset_save(AmpcoreNode graph, const char* path);
-AmpcoreResult ampcore_preset_load(AmpcoreNode graph, const char* path);
+/* file inputs are not part of presets: their path is not serialized */
+AmpcoreResult ampcore_preset_load(AmpcoreNode graph, const char* path, uint32_t sample_rate);
 
 #ifdef __cplusplus
 }

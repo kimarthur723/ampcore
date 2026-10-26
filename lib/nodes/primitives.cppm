@@ -103,13 +103,14 @@ public:
 
     void process(float* pOutput, const float* pInput, ma_uint32 frameCount) override;
 
-    int getParameterCount() const override { return 3; }
+    int getParameterCount() const override { return 4; }
     ParameterInfo getParameterInfo(int index) const override
     {
         switch (index) {
             case 0: return {"freq", 20.0f, 20000.0f, 1000.0f, "Hz"};
             case 1: return {"q", 0.1f, 20.0f, 0.707f, ""};
             case 2: return {"dbGain", -24.0f, 24.0f, 0.0f, "dB"};
+            case 3: return {"mode", 0.0f, 6.0f, 0.0f, ""};
             default: return {"", 0, 0, 0, ""};
         }
     }
@@ -119,6 +120,7 @@ public:
             case 0: return freq_.load(std::memory_order_relaxed);
             case 1: return q_.load(std::memory_order_relaxed);
             case 2: return dbGain_.load(std::memory_order_relaxed);
+            case 3: return static_cast<float>(mode_.load(std::memory_order_relaxed));
             default: return 0.0f;
         }
     }
@@ -128,6 +130,7 @@ public:
             case 0: setFreq(value); break;
             case 1: setQ(value); break;
             case 2: setDbGain(value); break;
+            case 3: setMode(static_cast<Mode>(static_cast<int>(value))); break;
             default: break;
         }
     }
