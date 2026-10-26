@@ -97,3 +97,14 @@ TEST_CASE("destroying a registered node unregisters it", "[registry]")
     a.reset();
     REQUIRE(graph.getRegisteredNodes().empty());
 }
+
+TEST_CASE("a node may outlive its graph", "[registry]")
+{
+    auto graph = std::make_unique<ProcessorGraph>(1);
+    auto a = std::make_unique<Fuzz>(*graph, 1);
+    graph->registerNode("Fuzz", a.get());
+
+    graph.reset();
+    a.reset(); // must not call back into the freed graph
+}
+

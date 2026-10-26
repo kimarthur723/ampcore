@@ -69,9 +69,9 @@ public:
 
     ~ProcessorGraph();
 
-    // movable
-    ProcessorGraph(ProcessorGraph&& other) noexcept;
-    ProcessorGraph& operator=(ProcessorGraph&& other) noexcept;
+    // pinned: ma_node_graph points into itself and every node points at it
+    ProcessorGraph(const ProcessorGraph&) = delete;
+    ProcessorGraph& operator=(const ProcessorGraph&) = delete;
 
     ma_node_graph* get();
     ma_node* getEndpoint();
@@ -144,7 +144,6 @@ private:
     void drainCommands();
     void recordConnection(NodeBase* from, NodeBase* to, bool toOutput);
     void dropConnectionsFrom(NodeBase* node);
-    void rebindDestroyHooks();
     static void onNodeDestroyed(void* ctx, NodeBase* node);
 };
 
@@ -165,40 +164,14 @@ ProcessorGraph::ProcessorGraph(ma_uint32 channels)
 
 ProcessorGraph::~ProcessorGraph()
 {
+    // nodes may outlive the graph; their destructors must not call back into it
+    for (auto& rn : registeredNodes_)
+        rn.node->setDestroyHook(nullptr, nullptr);
+
     if (initialized_)
     {
         ma_node_graph_uninit(&graph_, nullptr);
     }
-}
-
-ProcessorGraph::ProcessorGraph(ProcessorGraph&& other) noexcept
-    : registeredNodes_(std::move(other.registeredNodes_)),
-      nextNodeId_(other.nextNodeId_),
-      registeredConnections_(std::move(other.registeredConnections_)),
-      graph_(other.graph_), channels_(other.channels_), initialized_(other.initialized_)
-{
-    other.initialized_ = false;
-    rebindDestroyHooks();
-}
-
-ProcessorGraph& ProcessorGraph::operator=(ProcessorGraph&& other) noexcept
-{
-    if (this != &other)
-    {
-        if (initialized_)
-        {
-            ma_node_graph_uninit(&graph_, nullptr);
-        }
-        graph_ = other.graph_;
-        channels_ = other.channels_;
-        initialized_ = other.initialized_;
-        registeredNodes_ = std::move(other.registeredNodes_);
-        nextNodeId_ = other.nextNodeId_;
-        registeredConnections_ = std::move(other.registeredConnections_);
-        other.initialized_ = false;
-        rebindDestroyHooks();
-    }
-    return *this;
 }
 
 ma_node_graph* ProcessorGraph::get()
@@ -349,12 +322,6 @@ void ProcessorGraph::unregisterNode(int id)
 void ProcessorGraph::onNodeDestroyed(void* ctx, NodeBase* node)
 {
     static_cast<ProcessorGraph*>(ctx)->unregisterNode(node);
-}
-
-void ProcessorGraph::rebindDestroyHooks()
-{
-    for (auto& rn : registeredNodes_)
-        rn.node->setDestroyHook(&ProcessorGraph::onNodeDestroyed, this);
 }
 
 void ProcessorGraph::unregisterNode(NodeBase* node)
