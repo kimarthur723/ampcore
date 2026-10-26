@@ -13,6 +13,11 @@ add_executable(ampcore_tests
 )
 target_link_libraries(ampcore_tests PRIVATE ampcore_core Catch2::Catch2WithMain)
 
+# the C API as a C caller sees it: only the shared library, no module imports
+add_executable(ampcore_capi_tests test_capi.cpp)
+target_link_libraries(ampcore_capi_tests PRIVATE ampcore_capi Catch2::Catch2WithMain)
+
 include(CTest)
 include(Catch)
 catch_discover_tests(ampcore_tests)
+catch_discover_tests(ampcore_capi_tests)

@@ -28,7 +28,12 @@ typedef struct {
 } AmpcoreParameterInfo;
 
 /* Opaque handle — points to a heap-allocated C++ object.
-   Callers never dereference these; they are just passed back to other functions. */
+   Callers never dereference these; they are just passed back to other functions.
+   Node functions check the node type: a handle of the wrong kind gives
+   AMPCORE_ERROR_INVALID_ARG (or 0 / no-op where nothing is returned). Graph and
+   engine handles are not checked; never pass one where the other is expected.
+   Nodes and their graph may be destroyed in either order; stop and destroy an
+   engine before its graph. */
 typedef void* AmpcoreNode;
 
 /* ── ProcessorGraph ──────────────────────────────────────────────────────── */

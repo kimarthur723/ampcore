@@ -1,5 +1,6 @@
 #include "ampcore_capi.h"
 #include "miniaudio.h"
+#include <memory>
 #include <string>
 #include <cstdio>
 // NOTE: file I/O here uses C stdio rather than <fstream>/<sstream>. Those pull in
@@ -22,6 +23,13 @@ import tone_stack;
 import cabinet;
 import meter_node;
 import preset;
+
+// Every node handle is handed out as a NodeBase*, so reading it back through
+// void* is an exact round trip; specific node types are reached with a checked
+// downcast that rejects a handle of the wrong type.
+static AmpcoreNode node_handle(NodeBase* node) { return node; }
+static NodeBase* as_node(AmpcoreNode h) { return static_cast<NodeBase*>(h); }
+template <class T> static T* as(AmpcoreNode h) { return dynamic_cast<T*>(as_node(h)); }
 
 /* ── ProcessorGraph ──────────────────────────────────────────────────────── */
 
@@ -46,7 +54,7 @@ AmpcoreResult ampcore_graph_connect(AmpcoreNode graph, AmpcoreNode from, Ampcore
     if (!graph || !from || !to) return AMPCORE_ERROR_NULL_ARG;
     try {
         static_cast<ProcessorGraph*>(graph)->connect(
-            static_cast<NodeBase*>(from), static_cast<NodeBase*>(to));
+            as_node(from), as_node(to));
         return AMPCORE_OK;
     } catch (...) {
         return AMPCORE_ERROR_UNKNOWN;
@@ -58,7 +66,7 @@ AmpcoreResult ampcore_graph_connect_to_output(AmpcoreNode graph, AmpcoreNode nod
     if (!graph || !node) return AMPCORE_ERROR_NULL_ARG;
     try {
         static_cast<ProcessorGraph*>(graph)->connectToOutput(
-            static_cast<NodeBase*>(node));
+            as_node(node));
         return AMPCORE_OK;
     } catch (...) {
         return AMPCORE_ERROR_UNKNOWN;
@@ -70,7 +78,7 @@ AmpcoreResult ampcore_graph_post_connect(AmpcoreNode graph, AmpcoreNode from, Am
     if (!graph || !from || !to) return AMPCORE_ERROR_NULL_ARG;
     try {
         bool ok = static_cast<ProcessorGraph*>(graph)->postConnect(
-            static_cast<NodeBase*>(from), static_cast<NodeBase*>(to));
+            as_node(from), as_node(to));
         return ok ? AMPCORE_OK : AMPCORE_ERROR_QUEUE_FULL;
     } catch (...) {
         return AMPCORE_ERROR_UNKNOWN;
@@ -82,7 +90,7 @@ AmpcoreResult ampcore_graph_post_connect_to_output(AmpcoreNode graph, AmpcoreNod
     if (!graph || !node) return AMPCORE_ERROR_NULL_ARG;
     try {
         bool ok = static_cast<ProcessorGraph*>(graph)->postConnectToOutput(
-            static_cast<NodeBase*>(node));
+            as_node(node));
         return ok ? AMPCORE_OK : AMPCORE_ERROR_QUEUE_FULL;
     } catch (...) {
         return AMPCORE_ERROR_UNKNOWN;
@@ -94,7 +102,7 @@ AmpcoreResult ampcore_graph_post_disconnect(AmpcoreNode graph, AmpcoreNode node)
     if (!graph || !node) return AMPCORE_ERROR_NULL_ARG;
     try {
         bool ok = static_cast<ProcessorGraph*>(graph)->postDisconnect(
-            static_cast<NodeBase*>(node));
+            as_node(node));
         return ok ? AMPCORE_OK : AMPCORE_ERROR_QUEUE_FULL;
     } catch (...) {
         return AMPCORE_ERROR_UNKNOWN;
@@ -157,8 +165,9 @@ uint32_t ampcore_engine_get_sample_rate(AmpcoreNode engine)
 AmpcoreResult ampcore_engine_set_input_node(AmpcoreNode engine, AmpcoreNode input_node)
 {
     if (!engine || !input_node) return AMPCORE_ERROR_NULL_ARG;
-    static_cast<AudioEngine*>(engine)->setInputNode(
-        static_cast<AudioInputNode*>(input_node));
+    auto* input = as<AudioInputNode>(input_node);
+    if (!input) return AMPCORE_ERROR_INVALID_ARG;
+    static_cast<AudioEngine*>(engine)->setInputNode(input);
     return AMPCORE_OK;
 }
 
@@ -168,10 +177,10 @@ AmpcoreResult ampcore_audio_input_create(AmpcoreNode graph, uint32_t channels, A
 {
     if (!graph || !out) return AMPCORE_ERROR_NULL_ARG;
     try {
-        auto* node = new AudioInputNode(*static_cast<ProcessorGraph*>(graph),
+        auto node = std::make_unique<AudioInputNode>(*static_cast<ProcessorGraph*>(graph),
                                   static_cast<ma_uint32>(channels));
-        static_cast<ProcessorGraph*>(graph)->registerNode("AudioInput", node);
-        *out = node;
+        static_cast<ProcessorGraph*>(graph)->registerNode("AudioInput", node.get());
+        *out = node_handle(node.release());
         return AMPCORE_OK;
     } catch (...) {
         return AMPCORE_ERROR_INIT_FAILED;
@@ -180,7 +189,7 @@ AmpcoreResult ampcore_audio_input_create(AmpcoreNode graph, uint32_t channels, A
 
 void ampcore_audio_input_destroy(AmpcoreNode node)
 {
-    delete static_cast<AudioInputNode*>(node);
+    delete as_node(node);
 }
 
 /* ── FileInputNode ───────────────────────────────────────────────────────── */
@@ -191,9 +200,9 @@ AmpcoreResult ampcore_file_input_create(AmpcoreNode graph, const char* path,
 {
     if (!graph || !path || !out) return AMPCORE_ERROR_NULL_ARG;
     try {
-        *out = new FileInputNode(*static_cast<ProcessorGraph*>(graph), path,
+        *out = node_handle(new FileInputNode(*static_cast<ProcessorGraph*>(graph), path,
                                  static_cast<ma_uint32>(channels),
-                                 static_cast<ma_uint32>(sample_rate));
+                                 static_cast<ma_uint32>(sample_rate)));
         return AMPCORE_OK;
     } catch (...) {
         return AMPCORE_ERROR_INIT_FAILED;
@@ -202,13 +211,14 @@ AmpcoreResult ampcore_file_input_create(AmpcoreNode graph, const char* path,
 
 void ampcore_file_input_destroy(AmpcoreNode node)
 {
-    delete static_cast<FileInputNode*>(node);
+    delete as_node(node);
 }
 
 void ampcore_file_input_set_looping(AmpcoreNode node, int loop)
 {
-    if (!node) return;
-    static_cast<FileInputNode*>(node)->setLooping(loop != 0);
+    auto* n = as<FileInputNode>(node);
+    if (!n) return;
+    n->setLooping(loop != 0);
 }
 
 /* ── Fuzz ────────────────────────────────────────────────────────────────── */
@@ -218,10 +228,10 @@ AmpcoreResult ampcore_fuzz_create(AmpcoreNode graph, uint32_t channels,
 {
     if (!graph || !out) return AMPCORE_ERROR_NULL_ARG;
     try {
-        auto* node = new Fuzz(*static_cast<ProcessorGraph*>(graph),
+        auto node = std::make_unique<Fuzz>(*static_cast<ProcessorGraph*>(graph),
                        static_cast<ma_uint32>(channels), gain, threshold);
-        static_cast<ProcessorGraph*>(graph)->registerNode("Fuzz", node);
-        *out = node;
+        static_cast<ProcessorGraph*>(graph)->registerNode("Fuzz", node.get());
+        *out = node_handle(node.release());
         return AMPCORE_OK;
     } catch (...) {
         return AMPCORE_ERROR_INIT_FAILED;
@@ -230,20 +240,24 @@ AmpcoreResult ampcore_fuzz_create(AmpcoreNode graph, uint32_t channels,
 
 void ampcore_fuzz_destroy(AmpcoreNode node)
 {
-    delete static_cast<Fuzz*>(node);
+    delete as_node(node);
 }
 
 AmpcoreResult ampcore_fuzz_set_gain(AmpcoreNode node, float gain)
 {
     if (!node) return AMPCORE_ERROR_NULL_ARG;
-    static_cast<Fuzz*>(node)->setGain(gain);
+    auto* n = as<Fuzz>(node);
+    if (!n) return AMPCORE_ERROR_INVALID_ARG;
+    n->setGain(gain);
     return AMPCORE_OK;
 }
 
 AmpcoreResult ampcore_fuzz_set_threshold(AmpcoreNode node, float threshold)
 {
     if (!node) return AMPCORE_ERROR_NULL_ARG;
-    static_cast<Fuzz*>(node)->setThreshold(threshold);
+    auto* n = as<Fuzz>(node);
+    if (!n) return AMPCORE_ERROR_INVALID_ARG;
+    n->setThreshold(threshold);
     return AMPCORE_OK;
 }
 
@@ -255,12 +269,12 @@ AmpcoreResult ampcore_delay_create(AmpcoreNode graph, uint32_t channels, uint32_
 {
     if (!graph || !out) return AMPCORE_ERROR_NULL_ARG;
     try {
-        auto* node = new Delay(*static_cast<ProcessorGraph*>(graph),
+        auto node = std::make_unique<Delay>(*static_cast<ProcessorGraph*>(graph),
                         static_cast<ma_uint32>(channels),
                         static_cast<ma_uint32>(sample_rate),
                         delay_sec, feedback, mix);
-        static_cast<ProcessorGraph*>(graph)->registerNode("Delay", node);
-        *out = node;
+        static_cast<ProcessorGraph*>(graph)->registerNode("Delay", node.get());
+        *out = node_handle(node.release());
         return AMPCORE_OK;
     } catch (...) {
         return AMPCORE_ERROR_INIT_FAILED;
@@ -269,20 +283,24 @@ AmpcoreResult ampcore_delay_create(AmpcoreNode graph, uint32_t channels, uint32_
 
 void ampcore_delay_destroy(AmpcoreNode node)
 {
-    delete static_cast<Delay*>(node);
+    delete as_node(node);
 }
 
 AmpcoreResult ampcore_delay_set_feedback(AmpcoreNode node, float feedback)
 {
     if (!node) return AMPCORE_ERROR_NULL_ARG;
-    static_cast<Delay*>(node)->setFeedback(feedback);
+    auto* n = as<Delay>(node);
+    if (!n) return AMPCORE_ERROR_INVALID_ARG;
+    n->setFeedback(feedback);
     return AMPCORE_OK;
 }
 
 AmpcoreResult ampcore_delay_set_mix(AmpcoreNode node, float mix)
 {
     if (!node) return AMPCORE_ERROR_NULL_ARG;
-    static_cast<Delay*>(node)->setMix(mix);
+    auto* n = as<Delay>(node);
+    if (!n) return AMPCORE_ERROR_INVALID_ARG;
+    n->setMix(mix);
     return AMPCORE_OK;
 }
 
@@ -293,10 +311,10 @@ AmpcoreResult ampcore_gain_create(AmpcoreNode graph, uint32_t channels, float ga
 {
     if (!graph || !out) return AMPCORE_ERROR_NULL_ARG;
     try {
-        auto* node = new Gain(*static_cast<ProcessorGraph*>(graph),
+        auto node = std::make_unique<Gain>(*static_cast<ProcessorGraph*>(graph),
                        static_cast<ma_uint32>(channels), gain);
-        static_cast<ProcessorGraph*>(graph)->registerNode("Gain", node);
-        *out = node;
+        static_cast<ProcessorGraph*>(graph)->registerNode("Gain", node.get());
+        *out = node_handle(node.release());
         return AMPCORE_OK;
     } catch (...) {
         return AMPCORE_ERROR_INIT_FAILED;
@@ -305,13 +323,15 @@ AmpcoreResult ampcore_gain_create(AmpcoreNode graph, uint32_t channels, float ga
 
 void ampcore_gain_destroy(AmpcoreNode node)
 {
-    delete static_cast<Gain*>(node);
+    delete as_node(node);
 }
 
 AmpcoreResult ampcore_gain_set_gain(AmpcoreNode node, float gain)
 {
     if (!node) return AMPCORE_ERROR_NULL_ARG;
-    static_cast<Gain*>(node)->setGain(gain);
+    auto* n = as<Gain>(node);
+    if (!n) return AMPCORE_ERROR_INVALID_ARG;
+    n->setGain(gain);
     return AMPCORE_OK;
 }
 
@@ -323,12 +343,12 @@ AmpcoreResult ampcore_biquad_create(AmpcoreNode graph, uint32_t channels, uint32
 {
     if (!graph || !out) return AMPCORE_ERROR_NULL_ARG;
     try {
-        auto* node = new Biquad(*static_cast<ProcessorGraph*>(graph),
+        auto node = std::make_unique<Biquad>(*static_cast<ProcessorGraph*>(graph),
                          static_cast<ma_uint32>(channels),
                          static_cast<ma_uint32>(sample_rate),
                          static_cast<Biquad::Mode>(mode), freq, q, db_gain);
-        static_cast<ProcessorGraph*>(graph)->registerNode("Biquad", node);
-        *out = node;
+        static_cast<ProcessorGraph*>(graph)->registerNode("Biquad", node.get());
+        *out = node_handle(node.release());
         return AMPCORE_OK;
     } catch (...) {
         return AMPCORE_ERROR_INIT_FAILED;
@@ -337,34 +357,42 @@ AmpcoreResult ampcore_biquad_create(AmpcoreNode graph, uint32_t channels, uint32
 
 void ampcore_biquad_destroy(AmpcoreNode node)
 {
-    delete static_cast<Biquad*>(node);
+    delete as_node(node);
 }
 
 AmpcoreResult ampcore_biquad_set_freq(AmpcoreNode node, float freq)
 {
     if (!node) return AMPCORE_ERROR_NULL_ARG;
-    static_cast<Biquad*>(node)->setFreq(freq);
+    auto* n = as<Biquad>(node);
+    if (!n) return AMPCORE_ERROR_INVALID_ARG;
+    n->setFreq(freq);
     return AMPCORE_OK;
 }
 
 AmpcoreResult ampcore_biquad_set_q(AmpcoreNode node, float q)
 {
     if (!node) return AMPCORE_ERROR_NULL_ARG;
-    static_cast<Biquad*>(node)->setQ(q);
+    auto* n = as<Biquad>(node);
+    if (!n) return AMPCORE_ERROR_INVALID_ARG;
+    n->setQ(q);
     return AMPCORE_OK;
 }
 
 AmpcoreResult ampcore_biquad_set_db_gain(AmpcoreNode node, float db_gain)
 {
     if (!node) return AMPCORE_ERROR_NULL_ARG;
-    static_cast<Biquad*>(node)->setDbGain(db_gain);
+    auto* n = as<Biquad>(node);
+    if (!n) return AMPCORE_ERROR_INVALID_ARG;
+    n->setDbGain(db_gain);
     return AMPCORE_OK;
 }
 
 AmpcoreResult ampcore_biquad_set_mode(AmpcoreNode node, int mode)
 {
     if (!node) return AMPCORE_ERROR_NULL_ARG;
-    static_cast<Biquad*>(node)->setMode(static_cast<Biquad::Mode>(mode));
+    auto* n = as<Biquad>(node);
+    if (!n) return AMPCORE_ERROR_INVALID_ARG;
+    n->setMode(static_cast<Biquad::Mode>(mode));
     return AMPCORE_OK;
 }
 
@@ -375,11 +403,11 @@ AmpcoreResult ampcore_noise_gate_create(AmpcoreNode graph, uint32_t channels, ui
 {
     if (!graph || !out) return AMPCORE_ERROR_NULL_ARG;
     try {
-        auto* node = new NoiseGate(*static_cast<ProcessorGraph*>(graph),
+        auto node = std::make_unique<NoiseGate>(*static_cast<ProcessorGraph*>(graph),
                             static_cast<ma_uint32>(channels),
                             static_cast<ma_uint32>(sample_rate));
-        static_cast<ProcessorGraph*>(graph)->registerNode("NoiseGate", node);
-        *out = node;
+        static_cast<ProcessorGraph*>(graph)->registerNode("NoiseGate", node.get());
+        *out = node_handle(node.release());
         return AMPCORE_OK;
     } catch (...) {
         return AMPCORE_ERROR_INIT_FAILED;
@@ -388,27 +416,33 @@ AmpcoreResult ampcore_noise_gate_create(AmpcoreNode graph, uint32_t channels, ui
 
 void ampcore_noise_gate_destroy(AmpcoreNode node)
 {
-    delete static_cast<NoiseGate*>(node);
+    delete as_node(node);
 }
 
 AmpcoreResult ampcore_noise_gate_set_threshold(AmpcoreNode node, float threshold_db)
 {
     if (!node) return AMPCORE_ERROR_NULL_ARG;
-    static_cast<NoiseGate*>(node)->setThreshold(threshold_db);
+    auto* n = as<NoiseGate>(node);
+    if (!n) return AMPCORE_ERROR_INVALID_ARG;
+    n->setThreshold(threshold_db);
     return AMPCORE_OK;
 }
 
 AmpcoreResult ampcore_noise_gate_set_attack(AmpcoreNode node, float seconds)
 {
     if (!node) return AMPCORE_ERROR_NULL_ARG;
-    static_cast<NoiseGate*>(node)->setAttack(seconds);
+    auto* n = as<NoiseGate>(node);
+    if (!n) return AMPCORE_ERROR_INVALID_ARG;
+    n->setAttack(seconds);
     return AMPCORE_OK;
 }
 
 AmpcoreResult ampcore_noise_gate_set_release(AmpcoreNode node, float seconds)
 {
     if (!node) return AMPCORE_ERROR_NULL_ARG;
-    static_cast<NoiseGate*>(node)->setRelease(seconds);
+    auto* n = as<NoiseGate>(node);
+    if (!n) return AMPCORE_ERROR_INVALID_ARG;
+    n->setRelease(seconds);
     return AMPCORE_OK;
 }
 
@@ -419,11 +453,11 @@ AmpcoreResult ampcore_compressor_create(AmpcoreNode graph, uint32_t channels, ui
 {
     if (!graph || !out) return AMPCORE_ERROR_NULL_ARG;
     try {
-        auto* node = new Compressor(*static_cast<ProcessorGraph*>(graph),
+        auto node = std::make_unique<Compressor>(*static_cast<ProcessorGraph*>(graph),
                              static_cast<ma_uint32>(channels),
                              static_cast<ma_uint32>(sample_rate));
-        static_cast<ProcessorGraph*>(graph)->registerNode("Compressor", node);
-        *out = node;
+        static_cast<ProcessorGraph*>(graph)->registerNode("Compressor", node.get());
+        *out = node_handle(node.release());
         return AMPCORE_OK;
     } catch (...) {
         return AMPCORE_ERROR_INIT_FAILED;
@@ -432,41 +466,51 @@ AmpcoreResult ampcore_compressor_create(AmpcoreNode graph, uint32_t channels, ui
 
 void ampcore_compressor_destroy(AmpcoreNode node)
 {
-    delete static_cast<Compressor*>(node);
+    delete as_node(node);
 }
 
 AmpcoreResult ampcore_compressor_set_threshold(AmpcoreNode node, float threshold_db)
 {
     if (!node) return AMPCORE_ERROR_NULL_ARG;
-    static_cast<Compressor*>(node)->setThreshold(threshold_db);
+    auto* n = as<Compressor>(node);
+    if (!n) return AMPCORE_ERROR_INVALID_ARG;
+    n->setThreshold(threshold_db);
     return AMPCORE_OK;
 }
 
 AmpcoreResult ampcore_compressor_set_ratio(AmpcoreNode node, float ratio)
 {
     if (!node) return AMPCORE_ERROR_NULL_ARG;
-    static_cast<Compressor*>(node)->setRatio(ratio);
+    auto* n = as<Compressor>(node);
+    if (!n) return AMPCORE_ERROR_INVALID_ARG;
+    n->setRatio(ratio);
     return AMPCORE_OK;
 }
 
 AmpcoreResult ampcore_compressor_set_attack(AmpcoreNode node, float seconds)
 {
     if (!node) return AMPCORE_ERROR_NULL_ARG;
-    static_cast<Compressor*>(node)->setAttack(seconds);
+    auto* n = as<Compressor>(node);
+    if (!n) return AMPCORE_ERROR_INVALID_ARG;
+    n->setAttack(seconds);
     return AMPCORE_OK;
 }
 
 AmpcoreResult ampcore_compressor_set_release(AmpcoreNode node, float seconds)
 {
     if (!node) return AMPCORE_ERROR_NULL_ARG;
-    static_cast<Compressor*>(node)->setRelease(seconds);
+    auto* n = as<Compressor>(node);
+    if (!n) return AMPCORE_ERROR_INVALID_ARG;
+    n->setRelease(seconds);
     return AMPCORE_OK;
 }
 
 AmpcoreResult ampcore_compressor_set_makeup_gain(AmpcoreNode node, float db)
 {
     if (!node) return AMPCORE_ERROR_NULL_ARG;
-    static_cast<Compressor*>(node)->setMakeupGain(db);
+    auto* n = as<Compressor>(node);
+    if (!n) return AMPCORE_ERROR_INVALID_ARG;
+    n->setMakeupGain(db);
     return AMPCORE_OK;
 }
 
@@ -476,10 +520,10 @@ AmpcoreResult ampcore_reverb_create(AmpcoreNode graph, uint32_t channels, Ampcor
 {
     if (!graph || !out) return AMPCORE_ERROR_NULL_ARG;
     try {
-        auto* node = new Reverb(*static_cast<ProcessorGraph*>(graph),
+        auto node = std::make_unique<Reverb>(*static_cast<ProcessorGraph*>(graph),
                          static_cast<ma_uint32>(channels));
-        static_cast<ProcessorGraph*>(graph)->registerNode("Reverb", node);
-        *out = node;
+        static_cast<ProcessorGraph*>(graph)->registerNode("Reverb", node.get());
+        *out = node_handle(node.release());
         return AMPCORE_OK;
     } catch (...) {
         return AMPCORE_ERROR_INIT_FAILED;
@@ -488,27 +532,33 @@ AmpcoreResult ampcore_reverb_create(AmpcoreNode graph, uint32_t channels, Ampcor
 
 void ampcore_reverb_destroy(AmpcoreNode node)
 {
-    delete static_cast<Reverb*>(node);
+    delete as_node(node);
 }
 
 AmpcoreResult ampcore_reverb_set_room_size(AmpcoreNode node, float size)
 {
     if (!node) return AMPCORE_ERROR_NULL_ARG;
-    static_cast<Reverb*>(node)->setRoomSize(size);
+    auto* n = as<Reverb>(node);
+    if (!n) return AMPCORE_ERROR_INVALID_ARG;
+    n->setRoomSize(size);
     return AMPCORE_OK;
 }
 
 AmpcoreResult ampcore_reverb_set_damping(AmpcoreNode node, float damping)
 {
     if (!node) return AMPCORE_ERROR_NULL_ARG;
-    static_cast<Reverb*>(node)->setDamping(damping);
+    auto* n = as<Reverb>(node);
+    if (!n) return AMPCORE_ERROR_INVALID_ARG;
+    n->setDamping(damping);
     return AMPCORE_OK;
 }
 
 AmpcoreResult ampcore_reverb_set_mix(AmpcoreNode node, float mix)
 {
     if (!node) return AMPCORE_ERROR_NULL_ARG;
-    static_cast<Reverb*>(node)->setMix(mix);
+    auto* n = as<Reverb>(node);
+    if (!n) return AMPCORE_ERROR_INVALID_ARG;
+    n->setMix(mix);
     return AMPCORE_OK;
 }
 
@@ -519,11 +569,11 @@ AmpcoreResult ampcore_tone_stack_create(AmpcoreNode graph, uint32_t channels, ui
 {
     if (!graph || !out) return AMPCORE_ERROR_NULL_ARG;
     try {
-        auto* node = new ToneStack(*static_cast<ProcessorGraph*>(graph),
+        auto node = std::make_unique<ToneStack>(*static_cast<ProcessorGraph*>(graph),
                             static_cast<ma_uint32>(channels),
                             static_cast<ma_uint32>(sample_rate));
-        static_cast<ProcessorGraph*>(graph)->registerNode("ToneStack", node);
-        *out = node;
+        static_cast<ProcessorGraph*>(graph)->registerNode("ToneStack", node.get());
+        *out = node_handle(node.release());
         return AMPCORE_OK;
     } catch (...) {
         return AMPCORE_ERROR_INIT_FAILED;
@@ -532,27 +582,33 @@ AmpcoreResult ampcore_tone_stack_create(AmpcoreNode graph, uint32_t channels, ui
 
 void ampcore_tone_stack_destroy(AmpcoreNode node)
 {
-    delete static_cast<ToneStack*>(node);
+    delete as_node(node);
 }
 
 AmpcoreResult ampcore_tone_stack_set_bass(AmpcoreNode node, float value)
 {
     if (!node) return AMPCORE_ERROR_NULL_ARG;
-    static_cast<ToneStack*>(node)->setBass(value);
+    auto* n = as<ToneStack>(node);
+    if (!n) return AMPCORE_ERROR_INVALID_ARG;
+    n->setBass(value);
     return AMPCORE_OK;
 }
 
 AmpcoreResult ampcore_tone_stack_set_mid(AmpcoreNode node, float value)
 {
     if (!node) return AMPCORE_ERROR_NULL_ARG;
-    static_cast<ToneStack*>(node)->setMid(value);
+    auto* n = as<ToneStack>(node);
+    if (!n) return AMPCORE_ERROR_INVALID_ARG;
+    n->setMid(value);
     return AMPCORE_OK;
 }
 
 AmpcoreResult ampcore_tone_stack_set_treble(AmpcoreNode node, float value)
 {
     if (!node) return AMPCORE_ERROR_NULL_ARG;
-    static_cast<ToneStack*>(node)->setTreble(value);
+    auto* n = as<ToneStack>(node);
+    if (!n) return AMPCORE_ERROR_INVALID_ARG;
+    n->setTreble(value);
     return AMPCORE_OK;
 }
 
@@ -562,10 +618,10 @@ AmpcoreResult ampcore_cabinet_create(AmpcoreNode graph, uint32_t channels, Ampco
 {
     if (!graph || !out) return AMPCORE_ERROR_NULL_ARG;
     try {
-        auto* node = new CabinetNode(*static_cast<ProcessorGraph*>(graph),
+        auto node = std::make_unique<CabinetNode>(*static_cast<ProcessorGraph*>(graph),
                                static_cast<ma_uint32>(channels));
-        static_cast<ProcessorGraph*>(graph)->registerNode("Cabinet", node);
-        *out = node;
+        static_cast<ProcessorGraph*>(graph)->registerNode("Cabinet", node.get());
+        *out = node_handle(node.release());
         return AMPCORE_OK;
     } catch (...) {
         return AMPCORE_ERROR_INIT_FAILED;
@@ -574,13 +630,15 @@ AmpcoreResult ampcore_cabinet_create(AmpcoreNode graph, uint32_t channels, Ampco
 
 void ampcore_cabinet_destroy(AmpcoreNode node)
 {
-    delete static_cast<CabinetNode*>(node);
+    delete as_node(node);
 }
 
 AmpcoreResult ampcore_cabinet_load_ir(AmpcoreNode node, const char* wav_path, uint32_t sample_rate)
 {
     if (!node || !wav_path) return AMPCORE_ERROR_NULL_ARG;
-    bool ok = static_cast<CabinetNode*>(node)->loadIR(
+    auto* n = as<CabinetNode>(node);
+    if (!n) return AMPCORE_ERROR_INVALID_ARG;
+    bool ok = n->loadIR(
         wav_path, static_cast<ma_uint32>(sample_rate));
     return ok ? AMPCORE_OK : AMPCORE_ERROR_UNKNOWN;
 }
@@ -588,7 +646,9 @@ AmpcoreResult ampcore_cabinet_load_ir(AmpcoreNode node, const char* wav_path, ui
 AmpcoreResult ampcore_cabinet_set_mix(AmpcoreNode node, float mix)
 {
     if (!node) return AMPCORE_ERROR_NULL_ARG;
-    static_cast<CabinetNode*>(node)->setMix(mix);
+    auto* n = as<CabinetNode>(node);
+    if (!n) return AMPCORE_ERROR_INVALID_ARG;
+    n->setMix(mix);
     return AMPCORE_OK;
 }
 
@@ -598,10 +658,10 @@ AmpcoreResult ampcore_meter_create(AmpcoreNode graph, uint32_t channels, Ampcore
 {
     if (!graph || !out) return AMPCORE_ERROR_NULL_ARG;
     try {
-        auto* node = new MeterNode(*static_cast<ProcessorGraph*>(graph),
+        auto node = std::make_unique<MeterNode>(*static_cast<ProcessorGraph*>(graph),
                              static_cast<ma_uint32>(channels));
-        static_cast<ProcessorGraph*>(graph)->registerNode("Meter", node);
-        *out = node;
+        static_cast<ProcessorGraph*>(graph)->registerNode("Meter", node.get());
+        *out = node_handle(node.release());
         return AMPCORE_OK;
     } catch (...) {
         return AMPCORE_ERROR_INIT_FAILED;
@@ -610,19 +670,21 @@ AmpcoreResult ampcore_meter_create(AmpcoreNode graph, uint32_t channels, Ampcore
 
 void ampcore_meter_destroy(AmpcoreNode node)
 {
-    delete static_cast<MeterNode*>(node);
+    delete as_node(node);
 }
 
 float ampcore_meter_get_rms(AmpcoreNode node, uint32_t channel)
 {
-    if (!node) return 0.0f;
-    return static_cast<MeterNode*>(node)->getRMS(channel);
+    auto* n = as<MeterNode>(node);
+    if (!n) return 0.0f;
+    return n->getRMS(channel);
 }
 
 float ampcore_meter_get_peak(AmpcoreNode node, uint32_t channel)
 {
-    if (!node) return 0.0f;
-    return static_cast<MeterNode*>(node)->getPeak(channel);
+    auto* n = as<MeterNode>(node);
+    if (!n) return 0.0f;
+    return n->getPeak(channel);
 }
 
 /* ── Parameter Introspection ─────────────────────────────────────────────── */
@@ -630,16 +692,16 @@ float ampcore_meter_get_peak(AmpcoreNode node, uint32_t channel)
 int ampcore_node_get_parameter_count(AmpcoreNode node)
 {
     if (!node) return 0;
-    return static_cast<NodeBase*>(node)->getParameterCount();
+    return as_node(node)->getParameterCount();
 }
 
 AmpcoreResult ampcore_node_get_parameter_info(AmpcoreNode node, int index, AmpcoreParameterInfo* out)
 {
     if (!node || !out) return AMPCORE_ERROR_NULL_ARG;
-    if (index < 0 || index >= static_cast<NodeBase*>(node)->getParameterCount())
+    if (index < 0 || index >= as_node(node)->getParameterCount())
         return AMPCORE_ERROR_INVALID_ARG;
     try {
-        ParameterInfo info = static_cast<NodeBase*>(node)->getParameterInfo(index);
+        ParameterInfo info = as_node(node)->getParameterInfo(index);
         out->name = info.name;
         out->min_value = info.min_value;
         out->max_value = info.max_value;
@@ -654,16 +716,16 @@ AmpcoreResult ampcore_node_get_parameter_info(AmpcoreNode node, int index, Ampco
 float ampcore_node_get_parameter_value(AmpcoreNode node, int index)
 {
     if (!node) return 0.0f;
-    return static_cast<NodeBase*>(node)->getParameterValue(index);
+    return as_node(node)->getParameterValue(index);
 }
 
 AmpcoreResult ampcore_node_set_parameter_value(AmpcoreNode node, int index, float value)
 {
     if (!node) return AMPCORE_ERROR_NULL_ARG;
-    if (index < 0 || index >= static_cast<NodeBase*>(node)->getParameterCount())
+    if (index < 0 || index >= as_node(node)->getParameterCount())
         return AMPCORE_ERROR_INVALID_ARG;
     try {
-        static_cast<NodeBase*>(node)->setParameterValue(index, value);
+        as_node(node)->setParameterValue(index, value);
         return AMPCORE_OK;
     } catch (...) {
         return AMPCORE_ERROR_UNKNOWN;
