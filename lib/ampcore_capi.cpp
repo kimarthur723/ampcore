@@ -749,22 +749,30 @@ AmpcoreResult ampcore_preset_save(AmpcoreNode graph, const char* path)
     }
 }
 
-// NOTE: the preset subsystem is unfinished. Nodes are never registered with the
-// graph (ProcessorGraph::registerNode/registerConnection are currently unused), so
-// serializeToJson produces an empty preset, and the createNode factory below only
-// receives an ma_node_graph* — not enough to reconstruct nodes that need channel /
-// sample-rate context. Until that is built out, load rebuilds an empty graph and
-// rejects any preset that actually contains nodes.
-static NodeBase* preset_create_node(const std::string& /*type*/, ma_node_graph* /*graph*/)
+static NodeBase* preset_create_node(const std::string& type, ProcessorGraph& graph, void* user)
 {
+    ma_uint32 ch = graph.getChannels();
+    ma_uint32 sr = *static_cast<ma_uint32*>(user);
+    if (type == "AudioInput") return new AudioInputNode(graph, ch);
+    if (type == "Fuzz")       return new Fuzz(graph, ch);
+    if (type == "Delay")      return new Delay(graph, ch, sr);
+    if (type == "Gain")       return new Gain(graph, ch);
+    if (type == "Biquad")     return new Biquad(graph, ch, sr);
+    if (type == "NoiseGate")  return new NoiseGate(graph, ch, sr);
+    if (type == "Compressor") return new Compressor(graph, ch, sr);
+    if (type == "Reverb")     return new Reverb(graph, ch, sr);
+    if (type == "ToneStack")  return new ToneStack(graph, ch, sr);
+    if (type == "Cabinet")    return new CabinetNode(graph, ch);
+    if (type == "Meter")      return new MeterNode(graph, ch);
     return nullptr;
 }
-static void preset_destroy_node(NodeBase* node)
+
+static void preset_destroy_node(NodeBase* node, void*)
 {
     delete node;
 }
 
-AmpcoreResult ampcore_preset_load(AmpcoreNode graph, const char* path)
+AmpcoreResult ampcore_preset_load(AmpcoreNode graph, const char* path, uint32_t sample_rate)
 {
     if (!graph || !path) return AMPCORE_ERROR_NULL_ARG;
     try {
@@ -778,8 +786,9 @@ AmpcoreResult ampcore_preset_load(AmpcoreNode graph, const char* path)
         bool read_ok = (std::ferror(f) == 0);
         std::fclose(f);
         if (!read_ok) return AMPCORE_ERROR_UNKNOWN;
+        ma_uint32 sr = static_cast<ma_uint32>(sample_rate);
         bool ok = static_cast<ProcessorGraph*>(graph)->loadFromJson(
-            contents, preset_create_node, preset_destroy_node);
+            contents, preset_create_node, preset_destroy_node, &sr);
         return ok ? AMPCORE_OK : AMPCORE_ERROR_UNKNOWN;
     } catch (...) {
         return AMPCORE_ERROR_UNKNOWN;

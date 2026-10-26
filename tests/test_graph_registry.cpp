@@ -11,6 +11,16 @@ import primitives;
 
 namespace {
 
+NodeBase* factory(const std::string& type, ProcessorGraph& graph, void*)
+{
+    if (type == "Fuzz") return new Fuzz(graph, 1);
+    if (type == "Gain") return new Gain(graph, 1);
+    if (type == "Biquad") return new Biquad(graph, 1, 44100);
+    return nullptr;
+}
+
+void destroy(NodeBase* node, void*) { delete node; }
+
 bool hasEdge(const std::string& json, const std::string& edge)
 {
     return json.find(edge) != std::string::npos;
@@ -108,3 +118,72 @@ TEST_CASE("a node may outlive its graph", "[registry]")
     a.reset(); // must not call back into the freed graph
 }
 
+TEST_CASE("preset round-trips nodes, params, edges and biquad mode", "[preset]")
+{
+    ProcessorGraph src(1);
+    Fuzz fuzz(src, 1, 7.0f, 0.4f);
+    Biquad bq(src, 1, 44100, Biquad::Mode::HighShelf, 3000.0f, 1.2f, 4.5f);
+    src.registerNode("Fuzz", &fuzz);
+    src.registerNode("Biquad", &bq);
+    src.connect(&fuzz, &bq);
+    src.connectToOutput(&bq);
+    std::string json = src.serializeToJson();
+
+    ProcessorGraph dst(1);
+    REQUIRE(dst.loadFromJson(json, factory, destroy));
+
+    const auto& nodes = dst.getRegisteredNodes();
+    REQUIRE(nodes.size() == 2);
+    REQUIRE(nodes[0].typeName == "Fuzz");
+    REQUIRE(nodes[0].node->getParameterValue(0) == Catch::Approx(7.0f));
+    REQUIRE(nodes[1].typeName == "Biquad");
+    REQUIRE(nodes[1].node->getParameterValue(0) == Catch::Approx(3000.0f));
+    REQUIRE(nodes[1].node->getParameterValue(3) == Catch::Approx(static_cast<float>(Biquad::Mode::HighShelf)));
+    REQUIRE(dst.serializeToJson() == json);
+
+    for (const auto& rn : dst.getRegisteredNodes()) destroy(rn.node, nullptr);
+}
+
+TEST_CASE("loading a preset replaces registered nodes and leaves others alone", "[preset]")
+{
+    ProcessorGraph graph(1);
+    Gain host(graph, 1);
+    auto* old = new Fuzz(graph, 1);
+    graph.registerNode("Fuzz", old);
+    graph.connect(&host, old);
+
+    int destroyed = 0;
+    auto counting = [](NodeBase* n, void* user) { ++*static_cast<int*>(user); delete n; };
+    REQUIRE(graph.loadFromJson(R"({"nodes":[{"id":5,"type":"Gain"}],"connections":[]})",
+                               factory, counting, &destroyed));
+
+    REQUIRE(destroyed == 1);
+    REQUIRE(graph.getRegisteredNodes().size() == 1);
+    REQUIRE(graph.getRegisteredNodes()[0].id == 5);
+    REQUIRE(graph.findNodeId(&host) == -1);
+
+    delete graph.getRegisteredNodes()[0].node;
+}
+
+TEST_CASE("loading fails without side effects on unknown type or pending commands", "[preset]")
+{
+    ProcessorGraph graph(1);
+    auto* keep = new Fuzz(graph, 1);
+    graph.registerNode("Fuzz", keep);
+
+    REQUIRE_FALSE(graph.loadFromJson(R"({"nodes":[{"id":1,"type":"Nope"}],"connections":[]})",
+                                     factory, destroy));
+    REQUIRE(graph.getRegisteredNodes().size() == 1);
+    REQUIRE(graph.getRegisteredNodes()[0].node == keep);
+
+    Gain other(graph, 1);
+    REQUIRE(graph.postConnect(keep, &other));
+    REQUIRE(graph.hasPendingCommands());
+    REQUIRE_FALSE(graph.loadFromJson(R"({"nodes":[],"connections":[]})", factory, destroy));
+    REQUIRE(graph.getRegisteredNodes().size() == 1);
+
+    float buf[8];
+    graph.read(buf, 8);
+    REQUIRE_FALSE(graph.hasPendingCommands());
+    delete keep;
+}
